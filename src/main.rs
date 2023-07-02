@@ -207,9 +207,17 @@ async fn fetch_and_save(
     basedir: &Path,
     sequence_type: SequenceType,
     client: &mut Client,
+    filter_value: &String,
 ) -> Result<()> {
     for filename in sequence_type.to_filenames().iter() {
-        let path = basedir.join(rec.to_filename(filename));
+        let path = basedir.join(filter_value).join(rec.to_filename(filename));
+        
+        // Ensure the directory exists.
+        if let Err(e) = std::fs::create_dir_all(&path.parent().unwrap()) {
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(anyhow!("Failed to create directory"));
+            }
+        }
 
         let f = File::create(path)?;
         let mut bw = BufWriter::new(f);
@@ -341,15 +349,17 @@ async fn main() -> Result<()> {
             let mut success_ids = vec![];
             let mut err_ids = vec![];
             eprintln!("--- Fetching start ---");
-            for rec in onekp.filter(filter_key, filter_values.as_ref()).iter() {
-                match fetch_and_save(rec, &rootdir, sequence_type, &mut client).await {
-                    Ok(()) => {
-                        eprintln!("{}: {}", "Success".green(), rec.species);
-                        success_ids.push(rec.id.to_owned());
-                    }
-                    Err(err) => {
-                        eprintln!("{}: {}\n{}", "Failed".red(), rec.species, err);
-                        err_ids.push(rec.id.to_owned());
+            for filter_value in filter_values.iter() {
+                for rec in onekp.filter(filter_key.clone(), vec![filter_value.to_string()].as_ref()).iter() {
+                    match fetch_and_save(rec, &rootdir, sequence_type, &mut client, filter_value).await {
+                        Ok(()) => {
+                            eprintln!("{}: {}", "Success".green(), rec.species);
+                            success_ids.push(rec.id.to_owned());
+                        }
+                        Err(err) => {
+                            eprintln!("{}: {}\n{}", "Failed".red(), rec.species, err);
+                            err_ids.push(rec.id.to_owned());
+                        }
                     }
                 }
             }
@@ -357,6 +367,7 @@ async fn main() -> Result<()> {
             eprintln!("{}: {}", "Success IDs".green(), success_ids.join(","));
             eprintln!("{}: {}", "Failed IDs".red(), err_ids.join(","));
         }
+        
         Commands::MetaData {
             filter_key,
             filter_values,
